@@ -15,7 +15,7 @@ import { createRouter, authMiddleware } from './routes/index.js';
 import { createAssetManager } from './assets/index.js';
 import { extractEmail } from './utils/common.js';
 import { forwardByLocalPart, forwardByMailboxConfig } from './email/forwarder.js';
-import { parseEmailBody, extractVerificationCode } from './email/parser.js';
+import { parseEmailBody, extractVerificationCode, decodeMimeHeader } from './email/parser.js';
 import { getForwardTarget } from './db/mailboxes.js';
 
 export default {
@@ -79,7 +79,8 @@ export default {
       const headers = message.headers;
       const toHeader = headers.get('to') || headers.get('To') || '';
       const fromHeader = headers.get('from') || headers.get('From') || '';
-      const subject = headers.get('subject') || headers.get('Subject') || '(无主题)';
+      const subjectRaw = headers.get('subject') || headers.get('Subject') || '(无主题)';
+      const subject = decodeMimeHeader(subjectRaw);
 
       // 解析收件人地址
       let envelopeTo = '';
@@ -111,7 +112,7 @@ export default {
       try {
         const resp = new Response(message.raw);
         rawBuffer = await resp.arrayBuffer();
-        const rawText = await new Response(rawBuffer).text();
+        const rawText = new TextDecoder('latin1').decode(rawBuffer);
         const parsed = parseEmailBody(rawText);
         textContent = parsed.text || '';
         htmlContent = parsed.html || '';

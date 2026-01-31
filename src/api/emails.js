@@ -201,9 +201,13 @@ export async function handleEmailsApi(request, db, url, path, options) {
           const obj = await r2.get(row.r2_object_key);
           if (obj) {
             let raw = '';
-            if (typeof obj.text === 'function') raw = await obj.text();
-            else if (typeof obj.arrayBuffer === 'function') raw = await new Response(await obj.arrayBuffer()).text();
-            else raw = await new Response(obj.body).text();
+            if (typeof obj.arrayBuffer === 'function') {
+              raw = new TextDecoder('latin1').decode(await obj.arrayBuffer());
+            } else if (typeof obj.text === 'function') {
+              raw = await obj.text();
+            } else {
+              raw = await new Response(obj.body).text();
+            }
             const parsed = parseEmailBody(raw || '');
             content = parsed.text || '';
             html_content = parsed.html || '';
