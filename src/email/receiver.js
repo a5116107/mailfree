@@ -5,7 +5,7 @@
 
 import { extractEmail } from '../utils/common.js';
 import { getOrCreateMailboxId } from '../db/index.js';
-import { parseEmailBody, extractVerificationCode } from './parser.js';
+import { parseEmailBody, extractVerificationCode, decodeMimeHeader } from './parser.js';
 
 /**
  * 处理通过 HTTP 接收的邮件
@@ -19,7 +19,8 @@ export async function handleEmailReceive(request, db, env) {
     const emailData = await request.json();
     const to = String(emailData?.to || '');
     const from = String(emailData?.from || '');
-    const subject = String(emailData?.subject || '(无主题)');
+    const subjectRaw = String(emailData?.subject || '(无主题)');
+    const subject = decodeMimeHeader(subjectRaw);
     const text = String(emailData?.text || '');
     const html = String(emailData?.html || '');
 

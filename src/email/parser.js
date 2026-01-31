@@ -15,6 +15,41 @@ export function parseEmailBody(raw) {
 }
 
 /**
+ * 解码 MIME Header（如 subject）中的 encoded-word
+ * @param {string} value - 原始头部字符串
+ * @returns {string} 解码后的字符串
+ */
+export function decodeMimeHeader(value = '') {
+  const raw = String(value || '');
+  if (!/=\?.+\?[bqBQ]\?.+\?=/.test(raw)) return raw;
+  return raw.replace(/=\?([^?]+)\?([bqBQ])\?([^?]+)\?=/g, (_, charset, encoding, text) => {
+    const normalized = normalizeCharset(charset);
+    let bytes = null;
+    if (encoding.toLowerCase() === 'b') {
+      try {
+        const bin = atob(text.replace(/\s+/g, ''));
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } catch (_) {
+        return _;
+      }
+    } else {
+      const qp = text.replace(/_/g, ' ');
+      bytes = decodeQuotedPrintableToBytes(qp);
+    }
+    try {
+      return new TextDecoder(normalized, { fatal: false }).decode(bytes);
+    } catch (_) {
+      try {
+        return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      } catch (_) {
+        return _;
+      }
+    }
+  });
+}
+
+/**
  * 解析邮件实体内容，处理单体和多部分内容
  */
 function parseEntity(headers, body) {
@@ -130,8 +165,8 @@ function splitMultipart(body, boundary) {
   return parts;
 }
 
-function decodeBody(body, transferEncoding) {
-  if (!body) return '';
+function decodeBodyToBytes(body, transferEncoding) {
+  if (!body) return null;
   const enc = transferEncoding.trim();
   if (enc === 'base64') {
     const cleaned = body.replace(/\s+/g, '');
@@ -139,36 +174,53 @@ function decodeBody(body, transferEncoding) {
       const bin = atob(cleaned);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      try {
-        return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-      } catch (_) {
-        return bin;
-      }
+      return bytes;
     } catch (_) {
-      return body;
+      return null;
     }
   }
   if (enc === 'quoted-printable') {
-    return decodeQuotedPrintable(body);
+    return decodeQuotedPrintableToBytes(body);
   }
-  return body;
+  return null;
+}
+
+function normalizeCharset(charset) {
+  const normalized = (charset || '').trim().toLowerCase();
+  if (!normalized) return 'utf-8';
+  if (normalized === 'utf8') return 'utf-8';
+  if (normalized === 'gb2312') return 'gb18030';
+  return normalized;
 }
 
 function decodeBodyWithCharset(body, transferEncoding, contentType) {
-  const decodedRaw = decodeBody(body, transferEncoding);
   const m = /charset\s*=\s*"?([^";]+)/i.exec(contentType || '');
-  const charset = (m && m[1] ? m[1].trim().toLowerCase() : '') || 'utf-8';
-  if (!decodedRaw) return '';
-  if (charset === 'utf-8' || charset === 'utf8' || charset === 'us-ascii') return decodedRaw;
+  const charset = normalizeCharset(m && m[1] ? m[1] : 'utf-8');
+  if (!body) return '';
+
+  const bytes = decodeBodyToBytes(body, transferEncoding);
+  if (bytes) {
+    try {
+      return new TextDecoder(charset, { fatal: false }).decode(bytes);
+    } catch (_) {
+      try {
+        return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      } catch (_) {
+        return '';
+      }
+    }
+  }
+
+  if (charset === 'utf-8' || charset === 'us-ascii') return body;
   try {
-    const bytes = new Uint8Array(decodedRaw.split('').map(c => c.charCodeAt(0)));
-    return new TextDecoder(charset, { fatal: false }).decode(bytes);
+    const rawBytes = new Uint8Array(body.split('').map(c => c.charCodeAt(0)));
+    return new TextDecoder(charset, { fatal: false }).decode(rawBytes);
   } catch (_) {
-    return decodedRaw;
+    return body;
   }
 }
 
-function decodeQuotedPrintable(input) {
+function decodeQuotedPrintableToBytes(input) {
   let s = input.replace(/=\r?\n/g, '');
   const bytes = [];
   for (let i = 0; i < s.length; i++) {
@@ -183,11 +235,7 @@ function decodeQuotedPrintable(input) {
     }
     bytes.push(ch.charCodeAt(0));
   }
-  try {
-    return new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
-  } catch (_) {
-    return s;
-  }
+  return new Uint8Array(bytes);
 }
 
 function guessHtmlFromRaw(raw) {
